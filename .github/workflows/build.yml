@@ -3,20 +3,20 @@ name: Build APK from Flutter/ZIP
 on:
   workflow_dispatch:
     inputs:
-      url:                      # ← Match dengan bot
+      url:
         description: 'URL website (untuk webview)'
         required: false
         default: ''
-      app_name:                 # ← Match dengan bot
+      app_name:
         description: 'Nama Aplikasi'
         required: true
-      package_name:             # ← Match dengan bot
+      package_name:
         description: 'Package Name (com.example.app)'
         required: true
-      user_id:                  # ← Match dengan bot
+      user_id:
         description: 'User ID Telegram untuk kirim APK'
         required: true
-      zip_url:                  # ← Match dengan bot
+      zip_url:
         description: 'URL ZIP file (dari Telegram)'
         required: false
         default: ''
@@ -54,57 +54,52 @@ jobs:
           mkdir -p ${{ github.workspace }}/project
           cd ${{ github.workspace }}/project
           
-          # Cek apakah ada zip_url (dari Telegram)
           if [ -n "${{ github.event.inputs.zip_url }}" ]; then
             echo "📦 Downloading project from ZIP URL..."
             wget -O project.zip "${{ github.event.inputs.zip_url }}"
             unzip -o project.zip
           else
             echo "🌐 Creating webview project from URL: ${{ github.event.inputs.url }}"
-            # Buat project webview dari URL
             mkdir -p lib
-            cat > pubspec.yaml << 'EOF'
-            name: ${{ github.event.inputs.app_name }}
-            description: A webview application
-            version: 1.0.0
-            environment:
-              sdk: '>=3.0.0 <4.0.0'
-            dependencies:
-              flutter:
-                sdk: flutter
-              webview_flutter: ^4.4.0
-            flutter:
-              uses-material-design: true
-            EOF
             
-            cat > lib/main.dart << 'EOF'
-            import 'package:flutter/material.dart';
-            import 'package:webview_flutter/webview_flutter.dart';
+            echo "name: ${{ github.event.inputs.app_name }}" > pubspec.yaml
+            echo "description: A webview application" >> pubspec.yaml
+            echo "version: 1.0.0" >> pubspec.yaml
+            echo "environment:" >> pubspec.yaml
+            echo "  sdk: '>=3.0.0 <4.0.0'" >> pubspec.yaml
+            echo "dependencies:" >> pubspec.yaml
+            echo "  flutter:" >> pubspec.yaml
+            echo "    sdk: flutter" >> pubspec.yaml
+            echo "  webview_flutter: ^4.4.0" >> pubspec.yaml
+            echo "flutter:" >> pubspec.yaml
+            echo "  uses-material-design: true" >> pubspec.yaml
             
-            void main() => runApp(const WebApp());
-            
-            class WebApp extends StatelessWidget {
-              const WebApp({super.key});
-              
-              @override
-              Widget build(BuildContext context) {
-                return MaterialApp(
-                  title: '${{ github.event.inputs.app_name }}',
-                  theme: ThemeData.dark(),
-                  home: Scaffold(
-                    appBar: AppBar(
-                      title: Text('${{ github.event.inputs.app_name }}'),
-                      backgroundColor: Colors.blue,
-                    ),
-                    body: WebView(
-                      initialUrl: '${{ github.event.inputs.url }}',
-                      javascriptMode: JavascriptMode.unrestricted,
-                    ),
-                  ),
-                );
-              }
-            }
-            EOF
+            echo "import 'package:flutter/material.dart';" > lib/main.dart
+            echo "import 'package:webview_flutter/webview_flutter.dart';" >> lib/main.dart
+            echo "" >> lib/main.dart
+            echo "void main() => runApp(const WebApp());" >> lib/main.dart
+            echo "" >> lib/main.dart
+            echo "class WebApp extends StatelessWidget {" >> lib/main.dart
+            echo "  const WebApp({super.key});" >> lib/main.dart
+            echo "" >> lib/main.dart
+            echo "  @override" >> lib/main.dart
+            echo "  Widget build(BuildContext context) {" >> lib/main.dart
+            echo "    return MaterialApp(" >> lib/main.dart
+            echo "      title: '${{ github.event.inputs.app_name }}'," >> lib/main.dart
+            echo "      theme: ThemeData.dark()," >> lib/main.dart
+            echo "      home: Scaffold(" >> lib/main.dart
+            echo "        appBar: AppBar(" >> lib/main.dart
+            echo "          title: Text('${{ github.event.inputs.app_name }}')," >> lib/main.dart
+            echo "          backgroundColor: Colors.blue," >> lib/main.dart
+            echo "        )," >> lib/main.dart
+            echo "        body: WebView(" >> lib/main.dart
+            echo "          initialUrl: '${{ github.event.inputs.url }}'," >> lib/main.dart
+            echo "          javascriptMode: JavascriptMode.unrestricted," >> lib/main.dart
+            echo "        )," >> lib/main.dart
+            echo "      )," >> lib/main.dart
+            echo "    );" >> lib/main.dart
+            echo "  }" >> lib/main.dart
+            echo "}" >> lib/main.dart
           fi
           
           ls -la
