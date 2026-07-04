@@ -156,21 +156,82 @@ jobs:
           name: ${{ github.event.inputs.app_name }}-${{ github.event.inputs.package_name }}
           path: ${{ github.workspace }}/output/*.apk
       
-      - name: Send APK to User (via Telegram)
+      - name: Upload APK to Cloud Storage
+        id: upload
         if: always()
-        env:
-          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
           APK_PATH="${{ github.workspace }}/output/${{ github.event.inputs.app_name }}.apk"
-          if [ -f "$APK_PATH" ]; then
-            echo "📤 Sending APK to user: ${{ github.event.inputs.user_id }}"
-            curl -F "chat_id=${{ github.event.inputs.user_id }}" \
-                 -F "document=@$APK_PATH" \
-                 -F "caption=✅ Build Selesai!%0A📱 Nama: ${{ github.event.inputs.app_name }}%0A📦 Package: ${{ github.event.inputs.package_name }}%0A🔗 URL: ${{ github.event.inputs.url }}" \
-                 "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument" || echo "❌ Failed to send APK"
-          else
-            echo "❌ APK not found at $APK_PATH"
+          
+          if [ ! -f "$APK_PATH" ]; then
+            echo "❌ APK not found!"
+            exit 1
           fi
+          
+          # Dapatkan info file
+          FILE_SIZE=$(du -h "$APK_PATH" | cut -f1)
+          FILE_SIZE_BYTES=$(stat -c%s "$APK_PATH")
+          FILE_DATE=$(date -r "$APK_PATH" "+%Y-%m-%d %H:%M:%S")
+          FILE_MD5=$(md5sum "$APK_PATH" | cut -d' ' -f1)
+          FILE_NAME=$(basename "$APK_PATH")
+          
+          echo "FILE_SIZE=$FILE_SIZE" >> $GITHUB_ENV
+          echo "FILE_SIZE_BYTES=$FILE_SIZE_BYTES" >> $GITHUB_ENV
+          echo "FILE_DATE=$FILE_DATE" >> $GITHUB_ENV
+          echo "FILE_MD5=$FILE_MD5" >> $GITHUB_ENV
+          echo "FILE_NAME=$FILE_NAME" >> $GITHUB_ENV
+          
+          # Upload ke temp.sh
+          echo "📤 Uploading APK to temp.sh..."
+          UPLOAD_RESPONSE=$(curl -s -F "file=@$APK_PATH" https://temp.sh/upload)
+          
+          # Extract download URL
+          DOWNLOAD_URL=$(echo "$UPLOAD_RESPONSE" | grep -o 'https://temp.sh/[^"]*' | head -1)
+          
+          if [ -z "$DOWNLOAD_URL" ]; then
+            echo "❌ Failed to upload to temp.sh"
+            echo "Response: $UPLOAD_RESPONSE"
+            exit 1
+          fi
+          
+          echo "DOWNLOAD_URL=$DOWNLOAD_URL" >> $GITHUB_ENV
+          echo "✅ Upload successful!"
+          echo "📥 Download URL: $DOWNLOAD_URL"
+      
+       - name: Send Download Link to User
+  if: always()
+  env:
+    BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  run: |
+    if [ -z "${{ env.DOWNLOAD_URL }}" ]; then
+      echo "❌ No download URL found, skipping..."
+      exit 1
+    fi
+    
+    # Build message with echo
+    MESSAGE="🎉 *Build APK Selesai!*%0A%0A"
+    MESSAGE="${MESSAGE}📱 *Nama Aplikasi:* ${{ github.event.inputs.app_name }}%0A"
+    MESSAGE="${MESSAGE}📦 *Package Name:* ${{ github.event.inputs.package_name }}%0A"
+    MESSAGE="${MESSAGE}🔗 *URL:* ${{ github.event.inputs.url }}%0A%0A"
+    MESSAGE="${MESSAGE}📄 *File Info:*%0A"
+    MESSAGE="${MESSAGE}└── 📁 ${{ env.FILE_NAME }}%0A"
+    MESSAGE="${MESSAGE}    ├── 📊 Size: ${{ env.FILE_SIZE }}%0A"
+    MESSAGE="${MESSAGE}    ├── 📅 Date: ${{ env.FILE_DATE }}%0A"
+    MESSAGE="${MESSAGE}    └── 🔑 MD5: ${{ env.FILE_MD5 }}%0A%0A"
+    MESSAGE="${MESSAGE}⬇️ *Download APK:*%0A"
+    MESSAGE="${MESSAGE}${{ env.DOWNLOAD_URL }}%0A%0A"
+    MESSAGE="${MESSAGE}⏱️ *Build Time:* $(date "+%Y-%m-%d %H:%M:%S")%0A"
+    MESSAGE="${MESSAGE}🔧 *Status:* ✅ Success"
+    
+    echo "📤 Sending download link to user: ${{ github.event.inputs.user_id }}"
+    
+    curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+      -d "chat_id=${{ github.event.inputs.user_id }}" \
+      -d "text=$MESSAGE" \
+      -d "parse_mode=Markdown" \
+      -d "disable_web_page_preview=true"
+    
+    echo ""
+    echo "✅ Message sent!"
       
       - name: Notify build status
         if: always()
@@ -183,6 +244,7 @@ jobs:
             STATUS="❌ Build FAILED"
           fi
           
-          curl -F "chat_id=${{ github.event.inputs.user_id }}" \
-               -F "text=${STATUS}%0A📱 Nama: ${{ github.event.inputs.app_name }}%0A📦 Package: ${{ github.event.inputs.package_name }}" \
-               "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" || echo "❌ Failed to send status"
+          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${{ github.event.inputs.user_id }}" \
+            -d "text=${STATUS}%0A📱 Nama: ${{ github.event.inputs.app_name }}%0A📦 Package: ${{ github.event.inputs.package_name }}" \
+            -d "parse_mode=Markdown"
