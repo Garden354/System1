@@ -1,0 +1,193 @@
+name: Build APK from Flutter/ZIP
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:                      # ← Match dengan bot
+        description: 'URL website (untuk webview)'
+        required: false
+        default: ''
+      app_name:                 # ← Match dengan bot
+        description: 'Nama Aplikasi'
+        required: true
+      package_name:             # ← Match dengan bot
+        description: 'Package Name (com.example.app)'
+        required: true
+      user_id:                  # ← Match dengan bot
+        description: 'User ID Telegram untuk kirim APK'
+        required: true
+      zip_url:                  # ← Match dengan bot
+        description: 'URL ZIP file (dari Telegram)'
+        required: false
+        default: ''
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+          channel: 'stable'
+      
+      - name: Setup Android SDK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget unzip
+          wget https://dl.google.com/android/repository/commandlinetools-linux-latest.zip
+          unzip commandlinetools-linux-latest.zip -d $HOME/android-sdk
+          echo "y" | $HOME/android-sdk/cmdline-tools/bin/sdkmanager --sdk_root=$HOME/android-sdk "platforms;android-33" "build-tools;33.0.0"
+      
+      - name: Download project
+        run: |
+          mkdir -p ${{ github.workspace }}/project
+          cd ${{ github.workspace }}/project
+          
+          # Cek apakah ada zip_url (dari Telegram)
+          if [ -n "${{ github.event.inputs.zip_url }}" ]; then
+            echo "📦 Downloading project from ZIP URL..."
+            wget -O project.zip "${{ github.event.inputs.zip_url }}"
+            unzip -o project.zip
+          else
+            echo "🌐 Creating webview project from URL: ${{ github.event.inputs.url }}"
+            # Buat project webview dari URL
+            mkdir -p lib
+            cat > pubspec.yaml << 'EOF'
+            name: ${{ github.event.inputs.app_name }}
+            description: A webview application
+            version: 1.0.0
+            environment:
+              sdk: '>=3.0.0 <4.0.0'
+            dependencies:
+              flutter:
+                sdk: flutter
+              webview_flutter: ^4.4.0
+            flutter:
+              uses-material-design: true
+            EOF
+            
+            cat > lib/main.dart << 'EOF'
+            import 'package:flutter/material.dart';
+            import 'package:webview_flutter/webview_flutter.dart';
+            
+            void main() => runApp(const WebApp());
+            
+            class WebApp extends StatelessWidget {
+              const WebApp({super.key});
+              
+              @override
+              Widget build(BuildContext context) {
+                return MaterialApp(
+                  title: '${{ github.event.inputs.app_name }}',
+                  theme: ThemeData.dark(),
+                  home: Scaffold(
+                    appBar: AppBar(
+                      title: Text('${{ github.event.inputs.app_name }}'),
+                      backgroundColor: Colors.blue,
+                    ),
+                    body: WebView(
+                      initialUrl: '${{ github.event.inputs.url }}',
+                      javascriptMode: JavascriptMode.unrestricted,
+                    ),
+                  ),
+                );
+              }
+            }
+            EOF
+          fi
+          
+          ls -la
+      
+      - name: Detect project type
+        id: detect
+        run: |
+          cd ${{ github.workspace }}/project
+          if [ -f "pubspec.yaml" ]; then
+            echo "type=flutter" >> $GITHUB_OUTPUT
+            echo "📱 Flutter project detected"
+          elif [ -f "build.gradle" ] || [ -f "app/build.gradle" ]; then
+            echo "type=android" >> $GITHUB_OUTPUT
+            echo "📱 Android project detected"
+          else
+            echo "type=webview" >> $GITHUB_OUTPUT
+            echo "🌐 Webview project (fallback)"
+          fi
+      
+      - name: Build Flutter APK
+        if: steps.detect.outputs.type == 'flutter'
+        run: |
+          cd ${{ github.workspace }}/project
+          flutter pub get
+          flutter build apk --release
+          mkdir -p ${{ github.workspace }}/output
+          cp build/app/outputs/flutter-apk/app-release.apk ${{ github.workspace }}/output/${{ github.event.inputs.app_name }}.apk
+      
+      - name: Build Android APK
+        if: steps.detect.outputs.type == 'android'
+        run: |
+          cd ${{ github.workspace }}/project
+          if [ -f "gradlew" ]; then
+            chmod +x gradlew
+            ./gradlew assembleRelease
+          else
+            echo "No gradlew found, skipping..."
+          fi
+          mkdir -p ${{ github.workspace }}/output
+          find . -name "*.apk" -exec cp {} ${{ github.workspace }}/output/${{ github.event.inputs.app_name }}.apk \;
+      
+      - name: Build WebView APK
+        if: steps.detect.outputs.type == 'webview'
+        run: |
+          cd ${{ github.workspace }}/project
+          flutter pub get
+          flutter build apk --release
+          mkdir -p ${{ github.workspace }}/output
+          cp build/app/outputs/flutter-apk/app-release.apk ${{ github.workspace }}/output/${{ github.event.inputs.app_name }}.apk
+      
+      - name: Upload APK as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.app_name }}-${{ github.event.inputs.package_name }}
+          path: ${{ github.workspace }}/output/*.apk
+      
+      - name: Send APK to User (via Telegram)
+        if: always()
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          APK_PATH="${{ github.workspace }}/output/${{ github.event.inputs.app_name }}.apk"
+          if [ -f "$APK_PATH" ]; then
+            echo "📤 Sending APK to user: ${{ github.event.inputs.user_id }}"
+            curl -F "chat_id=${{ github.event.inputs.user_id }}" \
+                 -F "document=@$APK_PATH" \
+                 -F "caption=✅ Build Selesai!%0A📱 Nama: ${{ github.event.inputs.app_name }}%0A📦 Package: ${{ github.event.inputs.package_name }}%0A🔗 URL: ${{ github.event.inputs.url }}" \
+                 "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument" || echo "❌ Failed to send APK"
+          else
+            echo "❌ APK not found at $APK_PATH"
+          fi
+      
+      - name: Notify build status
+        if: always()
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          if [ ${{ job.status }} == 'success' ]; then
+            STATUS="✅ Build SUCCESS"
+          else
+            STATUS="❌ Build FAILED"
+          fi
+          
+          curl -F "chat_id=${{ github.event.inputs.user_id }}" \
+               -F "text=${STATUS}%0A📱 Nama: ${{ github.event.inputs.app_name }}%0A📦 Package: ${{ github.event.inputs.package_name }}" \
+               "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" || echo "❌ Failed to send status"
