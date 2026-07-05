@@ -60,8 +60,14 @@ jobs:
             unzip -o project.zip
           else
             echo "🌐 Creating webview project from URL: ${{ github.event.inputs.url }}"
-            mkdir -p lib
             
+            # Buat project Flutter dengan struktur lengkap
+            flutter create --org ${{ github.event.inputs.package_name }} --project-name ${{ github.event.inputs.app_name }} .
+            
+            # Hapus file default main.dart
+            rm -f lib/main.dart
+            
+            # Update pubspec.yaml dengan webview_flutter
             echo "name: ${{ github.event.inputs.app_name }}" > pubspec.yaml
             echo "description: A webview application" >> pubspec.yaml
             echo "version: 1.0.0" >> pubspec.yaml
@@ -74,6 +80,7 @@ jobs:
             echo "flutter:" >> pubspec.yaml
             echo "  uses-material-design: true" >> pubspec.yaml
             
+            # Buat main.dart dengan WebView
             echo "import 'package:flutter/material.dart';" > lib/main.dart
             echo "import 'package:webview_flutter/webview_flutter.dart';" >> lib/main.dart
             echo "" >> lib/main.dart
